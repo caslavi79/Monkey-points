@@ -1178,7 +1178,7 @@ function _npNotify() { _npCbs.forEach(function(f){ f(); }); }
 function loadNotifProfile() {
   if (!STORE.uid) return;
   var tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  sb.from('profiles').select('*').eq('user_id', STORE.uid).single().then(function(res) {
+  sb.from('profiles').select('*').eq('user_id', STORE.uid).maybeSingle().then(function(res) {
     _np = res.data || { habits_enabled: false, habits_hour: 9, tasks_enabled: false, tasks_hour: 9, notif_tz: tz };
     if (!_np.notif_tz || _np.notif_tz !== tz) {
       _np.notif_tz = tz;
