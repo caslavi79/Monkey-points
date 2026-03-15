@@ -157,6 +157,13 @@ async function loadAll() {
     sb.from('tasks').select('*'),
     sb.from('time_logs').select('*')
   ]);
+  var _names = ['habits','completions','debts','debt_payments','income','expenses','projects','tasks','time_logs'];
+  var _results = [h,c,d,dp,inc,exp,pj,t,tl];
+  var _errs = [];
+  _results.forEach(function(r, i) {
+    if (r.error) _errs.push(_names[i] + ': ' + r.error.message + ' [code=' + r.error.code + ']');
+  });
+  if (_errs.length) throw new Error('DB load failed — ' + _errs.join(' | '));
   STORE.habits        = h.data   || [];
   STORE.completions   = c.data   || [];
   STORE.debts         = d.data   || [];
@@ -170,7 +177,7 @@ async function loadAll() {
 
 async function deleteAllUserData() {
   var uid = STORE.uid;
-  await Promise.all([
+  var _delResults = await Promise.all([
     sb.from('completions').delete().eq('user_id',uid),
     sb.from('habits').delete().eq('user_id',uid),
     sb.from('debts').delete().eq('user_id',uid),
@@ -181,6 +188,9 @@ async function deleteAllUserData() {
     sb.from('tasks').delete().eq('user_id',uid),
     sb.from('time_logs').delete().eq('user_id',uid)
   ]);
+  _delResults.forEach(function(r,i){
+    if(r&&r.error) console.error('[deleteAllUserData] table '+i+' failed:',r.error.message);
+  });
   STORE.habits=[]; STORE.completions=[]; STORE.debts=[]; STORE.debt_payments=[];
   STORE.income=[]; STORE.expenses=[]; STORE.projects=[]; STORE.tasks=[]; STORE.time_logs=[];
 }
@@ -191,20 +201,40 @@ function _month() { var d=new Date(); return d.getFullYear()+'-'+(d.getMonth()+1
 function _weekNum() { var d=new Date(),start=new Date(d.getFullYear(),0,1); return Math.ceil(((d-start)/86400000+start.getDay()+1)/7); }
 function _weekId() { return new Date().getFullYear()+'-W'+_weekNum(); }
 
+// ── DB WRITE HELPER ──────────────────────────────────────────────────────────
+// Wraps every Supabase mutation. If the DB rejects a write (RLS, missing col,
+// wrong type, etc.) the error prints to console with full context instead of
+// disappearing silently. Open DevTools → Console to see any failures.
+function dbWrite(promise, label) {
+  Promise.resolve(promise).then(function(r) {
+    if (r && r.error) {
+      console.error(
+        '[DB WRITE FAILED] ' + (label||'unknown') + '\n' +
+        '  message: ' + r.error.message + '\n' +
+        '  code:    ' + r.error.code + '\n' +
+        '  hint:    ' + (r.error.hint||'none') + '\n' +
+        '  details: ' + (r.error.details||'none')
+      );
+    }
+  }).catch(function(e) {
+    console.error('[DB WRITE EXCEPTION] ' + (label||'unknown') + ':', e.message);
+  });
+}
+
 // ── HABITS ──
 function getH() { return [...STORE.habits].sort(function(a,b){return (a.order||0)-(b.order||0);}); }
 function saveH(h) { STORE.habits=h; }
 function addH(d) {
   var n={id:_id(),user_id:STORE.uid,name:d.name,icon:d.icon||'💪',color:d.color||'#FF9F0A',diff:d.diff||1,freq:d.freq||'daily',target:d.target||1,active:true,order:STORE.habits.length,schedTime:d.schedTime||null,schedDow:d.schedDow!=null?d.schedDow:null,schedDom:d.schedDom||null};
-  STORE.habits=[...STORE.habits,n]; sb.from('habits').insert(n);
+  STORE.habits=[...STORE.habits,n]; dbWrite(sb.from('habits').insert(n), 'addH');
 }
 function updH(id,u) {
   STORE.habits=STORE.habits.map(function(h){return h.id===id?Object.assign({},h,u):h;});
-  sb.from('habits').update(u).eq('id',id);
+  dbWrite(sb.from('habits').update(u).eq('id',id), 'updH');
 }
 function delH(id) {
   STORE.habits=STORE.habits.filter(function(h){return h.id!==id;});
-  sb.from('habits').delete().eq('id',id);
+  dbWrite(sb.from('habits').delete().eq('id',id), 'delH');
 }
 function moveH(id,dir) {
   var habits=STORE.habits.map(function(h,i){return h.order===undefined?Object.assign({},h,{order:i}):h;});
@@ -216,8 +246,8 @@ function moveH(id,dir) {
   habits[idx]   =Object.assign({},habits[idx],   {order:habits[si].order});
   habits[si]    =Object.assign({},habits[si],    {order:tmp});
   STORE.habits=habits;
-  sb.from('habits').update({order:habits[idx].order}).eq('id',habits[idx].id);
-  sb.from('habits').update({order:habits[si].order}).eq('id',habits[si].id);
+  dbWrite(sb.from('habits').update({order:habits[idx].order}).eq('id',habits[idx].id), 'moveH-a');
+  dbWrite(sb.from('habits').update({order:habits[si].order}).eq('id',habits[si].id), 'moveH-b');
 }
 
 // ── COMPLETIONS ──
@@ -229,14 +259,14 @@ function doC(hid,date) {
   if(!h) return null;
   var xp=DIFF[h.diff].xp;
   var n={id:_id(),user_id:STORE.uid,hid:hid,d:date,xp:xp};
-  STORE.completions=[...STORE.completions,n]; sb.from('completions').insert(n);
+  STORE.completions=[...STORE.completions,n]; dbWrite(sb.from('completions').insert(n), 'doC');
   return {xp:xp};
 }
 function unC(hid,date) {
   var c=STORE.completions.find(function(c){return c.hid===hid&&c.d===date;});
   if(c){
     STORE.completions=STORE.completions.filter(function(x){return !(x.hid===hid&&x.d===date);});
-    sb.from('completions').delete().eq('id',c.id);
+    dbWrite(sb.from('completions').delete().eq('id',c.id), 'unC');
   }
 }
 function periodCount(hid,freq) {
@@ -284,19 +314,19 @@ function getD() { return STORE.debts; }
 function saveD(d) { STORE.debts=d; }
 function addD(d) {
   var n={id:_id(),user_id:STORE.uid,name:d.name,type:d.type||'other',bal:d.bal||0,apr:d.apr||0,monthlyGoal:d.monthlyGoal||0,origBal:d.bal||0};
-  STORE.debts=[...STORE.debts,n]; sb.from('debts').insert(n);
+  STORE.debts=[...STORE.debts,n]; dbWrite(sb.from('debts').insert(n), 'addD');
 }
 function updD(id,u) {
   STORE.debts=STORE.debts.map(function(d){return d.id===id?Object.assign({},d,u):d;});
-  sb.from('debts').update(u).eq('id',id);
+  dbWrite(sb.from('debts').update(u).eq('id',id), 'updD');
 }
-function delD(id) { STORE.debts=STORE.debts.filter(function(d){return d.id!==id;}); sb.from('debts').delete().eq('id',id); }
+function delD(id) { STORE.debts=STORE.debts.filter(function(d){return d.id!==id;}); dbWrite(sb.from('debts').delete().eq('id',id), 'delD'); }
 
 function getDP() { return STORE.debt_payments; }
 function saveDP(p) { STORE.debt_payments=p; }
 function logPayment(debtId,amount,date) {
   var n={id:_id(),user_id:STORE.uid,did:debtId,amt:amount,d:date||_today()};
-  STORE.debt_payments=[...STORE.debt_payments,n]; sb.from('debt_payments').insert(n);
+  STORE.debt_payments=[...STORE.debt_payments,n]; dbWrite(sb.from('debt_payments').insert(n), 'logPayment');
   var debt=STORE.debts.find(function(d){return d.id===debtId;});
   if(debt) updD(debtId,{bal:Math.max(0,debt.bal-amount)});
   return {xp:15};
@@ -310,9 +340,9 @@ function getI() { return STORE.income; }
 function saveI(i) { STORE.income=i; }
 function addI(d) {
   var n={id:_id(),user_id:STORE.uid,name:d.name,amt:d.amt||0,recurring:d.recurring!==false,date:d.date||null};
-  STORE.income=[...STORE.income,n]; sb.from('income').insert(n);
+  STORE.income=[...STORE.income,n]; dbWrite(sb.from('income').insert(n), 'addI');
 }
-function delI(id) { STORE.income=STORE.income.filter(function(i){return i.id!==id;}); sb.from('income').delete().eq('id',id); }
+function delI(id) { STORE.income=STORE.income.filter(function(i){return i.id!==id;}); dbWrite(sb.from('income').delete().eq('id',id), 'delI'); }
 function monthlyIncome(month) {
   return STORE.income.reduce(function(a,i){if(i.recurring)return a+i.amt;if(i.date&&i.date.substring(0,7)===month)return a+i.amt;return a;},0);
 }
@@ -321,9 +351,9 @@ function getE() { return STORE.expenses; }
 function saveE(e) { STORE.expenses=e; }
 function addE(d) {
   var n={id:_id(),user_id:STORE.uid,name:d.name,cat:d.cat||'General',amt:d.amt||0,recurring:d.recurring!==false,date:d.date||null};
-  STORE.expenses=[...STORE.expenses,n]; sb.from('expenses').insert(n);
+  STORE.expenses=[...STORE.expenses,n]; dbWrite(sb.from('expenses').insert(n), 'addE');
 }
-function delE(id) { STORE.expenses=STORE.expenses.filter(function(e){return e.id!==id;}); sb.from('expenses').delete().eq('id',id); }
+function delE(id) { STORE.expenses=STORE.expenses.filter(function(e){return e.id!==id;}); dbWrite(sb.from('expenses').delete().eq('id',id), 'delE'); }
 function monthlyExpenses(month) {
   return STORE.expenses.reduce(function(a,e){if(e.recurring)return a+e.amt;if(e.date&&e.date.substring(0,7)===month)return a+e.amt;return a;},0);
 }
@@ -333,26 +363,26 @@ function getPj() { return STORE.projects; }
 function savePj(p) { STORE.projects=p; }
 function addPj(d) {
   var n={id:_id(),user_id:STORE.uid,name:d.name,desc:d.desc||'',color:d.color||'#FF9F0A',emoji:d.emoji||'📁',cat:d.cat||'personal',due:d.due||null};
-  STORE.projects=[...STORE.projects,n]; sb.from('projects').insert(n);
+  STORE.projects=[...STORE.projects,n]; dbWrite(sb.from('projects').insert(n), 'addPj');
 }
 function updPj(id,u) {
   STORE.projects=STORE.projects.map(function(p){return p.id===id?Object.assign({},p,u):p;});
-  sb.from('projects').update(u).eq('id',id);
+  dbWrite(sb.from('projects').update(u).eq('id',id), 'updPj');
 }
-function delPj(id) { STORE.projects=STORE.projects.filter(function(p){return p.id!==id;}); sb.from('projects').delete().eq('id',id); }
+function delPj(id) { STORE.projects=STORE.projects.filter(function(p){return p.id!==id;}); dbWrite(sb.from('projects').delete().eq('id',id), 'delPj'); }
 
 // ── TASKS ──
 function getT() { return STORE.tasks; }
 function saveT(t) { STORE.tasks=t; }
 function addT(d) {
   var n={id:_id(),user_id:STORE.uid,title:d.title,desc:d.desc||'',pid:d.pid||null,status:'todo',pri:d.pri||'medium',est:d.est||0,log:0,due:d.due||null,dueTime:d.dueTime||null,doDate:d.doDate||null,doTime:d.doTime||null,focus:false,focusDate:null,completedDate:null,cat:d.cat||null,created:_today()};
-  STORE.tasks=[...STORE.tasks,n]; sb.from('tasks').insert(n);
+  STORE.tasks=[...STORE.tasks,n]; dbWrite(sb.from('tasks').insert(n), 'addT');
 }
 function updT(id,u) {
   STORE.tasks=STORE.tasks.map(function(t){return t.id===id?Object.assign({},t,u):t;});
-  sb.from('tasks').update(u).eq('id',id);
+  dbWrite(sb.from('tasks').update(u).eq('id',id), 'updT');
 }
-function delT(id) { STORE.tasks=STORE.tasks.filter(function(t){return t.id!==id;}); sb.from('tasks').delete().eq('id',id); }
+function delT(id) { STORE.tasks=STORE.tasks.filter(function(t){return t.id!==id;}); dbWrite(sb.from('tasks').delete().eq('id',id), 'delT'); }
 function togFocus(id) {
   var t=STORE.tasks.find(function(x){return x.id===id;});
   if(t) updT(id,{focus:!t.focus,focusDate:!t.focus?_today():null});
@@ -363,7 +393,7 @@ function getTL() { return STORE.time_logs; }
 function saveTL(l) { STORE.time_logs=l; }
 function addTL(d) {
   var n={id:_id(),user_id:STORE.uid,tid:d.tid,pid:d.pid||null,d:d.d||_today(),m:d.m||0,note:d.note||''};
-  STORE.time_logs=[...STORE.time_logs,n]; sb.from('time_logs').insert(n);
+  STORE.time_logs=[...STORE.time_logs,n]; dbWrite(sb.from('time_logs').insert(n), 'addTL');
   if(d.tid){var t=STORE.tasks.find(function(x){return x.id===d.tid;});if(t) updT(d.tid,{log:(t.log||0)+d.m});}
 }
 
@@ -8863,7 +8893,9 @@ function LoginScreen({ onLogin }) {
       if (error) { setErr(error.message); return; }
       if (signUpData && signUpData.user) {
         STORE.uid = signUpData.user.id;
-        await loadAll();
+        try { await loadAll(); } catch(err) {
+          console.error('[MonkeyPoints] loadAll failed on signup:', err.message);
+        }
         loadNotifProfile();
         onLogin(signUpData.user.email);
       } else {
@@ -8876,7 +8908,10 @@ function LoginScreen({ onLogin }) {
       setLoading(false);
       if (error) { setErr(error.message); return; }
       STORE.uid = data.user.id;
-      await loadAll();
+      try { await loadAll(); } catch(err) {
+        console.error('[MonkeyPoints] loadAll failed on login:', err.message);
+        alert('Warning: some data failed to load. Check console for details.\n\n' + err.message);
+      }
       onLogin(data.user.email);
     }
   }
@@ -8920,6 +8955,7 @@ function LoginScreen({ onLogin }) {
 function MonkeyPoints() {
   var [user, setUser] = useState(null);
   var [loading, setLoading] = useState(true);
+  var [loadErr, setLoadErr] = useState(null);
 
   useEffect(function () {
     // Check for existing session on page load
@@ -8930,6 +8966,10 @@ function MonkeyPoints() {
         loadAll().then(function () {
           loadNotifProfile();
           setUser(session.user.email);
+          setLoading(false);
+        }).catch(function(err) {
+          console.error('[MonkeyPoints] loadAll failed on session restore:', err.message);
+          setLoadErr(err.message);
           setLoading(false);
         });
       } else {
@@ -8951,6 +8991,20 @@ function MonkeyPoints() {
       if (sub.data && sub.data.subscription) sub.data.subscription.unsubscribe();
     };
   }, []);
+
+  if (loadErr) return /*#__PURE__*/React.createElement(React.Fragment, null,
+    /*#__PURE__*/React.createElement("style", null, CSS),
+    /*#__PURE__*/React.createElement("div", {style:{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#000",padding:"32px",textAlign:"center",gap:"16px"}},
+      /*#__PURE__*/React.createElement("div", {style:{fontSize:48}}, "⚠️"),
+      /*#__PURE__*/React.createElement("div", {style:{fontSize:20,fontWeight:700,color:"#FF453A"}}, "Failed to load your data"),
+      /*#__PURE__*/React.createElement("div", {style:{fontSize:14,color:"rgba(255,255,255,0.5)",maxWidth:420,lineHeight:1.6,fontFamily:"monospace",background:"rgba(255,69,58,0.08)",padding:"12px 16px",borderRadius:10,textAlign:"left"}}, loadErr),
+      /*#__PURE__*/React.createElement("div", {style:{fontSize:12,color:"rgba(255,255,255,0.3)"}}, "Open browser console (Cmd+Option+I → Console) for full details"),
+      /*#__PURE__*/React.createElement("button", {
+        onClick:function(){sb.auth.signOut();window.location.reload();},
+        style:{marginTop:8,background:"rgba(255,69,58,0.12)",border:"1px solid rgba(255,69,58,0.3)",borderRadius:12,color:"#FF453A",fontFamily:"inherit",fontSize:14,fontWeight:600,padding:"10px 24px",cursor:"pointer"}
+      }, "Sign Out & Retry")
+    )
+  );
 
   if (loading) return /*#__PURE__*/React.createElement(React.Fragment, null,
     /*#__PURE__*/React.createElement("style", null, CSS),
