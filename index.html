@@ -8812,6 +8812,7 @@ function LoginScreen({ onLogin }) {
       if (error) { setErr(error.message); return; }
       STORE.uid = data.user.id;
       await loadAll();
+      await loadNotifProfile();
       onLogin(data.user.email);
     }
   }
@@ -8863,6 +8864,7 @@ function MonkeyPoints() {
       if (session) {
         STORE.uid = session.user.id;
         loadAll().then(function () {
+          loadNotifProfile();
           setUser(session.user.email);
           setLoading(false);
         });
