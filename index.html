@@ -1314,6 +1314,9 @@ function BellButton(props) {
       ),
       React.createElement("div", { style: { fontSize: 12, color: "rgba(255,255,255,0.35)" } },
         "✏️ Edit time in ", React.createElement("span", { style: { color: "#BF5AF2" } }, "Profile")
+      ),
+      React.createElement("div", { style: { fontSize: 11, color: "rgba(255,165,0,0.7)", marginTop: 6, lineHeight: 1.4 } },
+        "⚠️ First email may land in spam — mark as Not Spam to fix."
       )
     )
   );
@@ -1359,7 +1362,10 @@ function NotifSettingsSection() {
 
   return React.createElement("div", { style: { margin: "24px 0" } },
     React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "📧 Email Notifications"),
-    React.createElement("div", { style: { fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 10 } }, "🌍 Timezone: " + (p.notif_tz || 'detecting...')),
+    React.createElement("div", { style: { fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 6 } }, "🌍 Timezone: " + (p.notif_tz || 'detecting...')),
+    React.createElement("div", { style: { fontSize: 12, color: "rgba(255,165,0,0.65)", marginBottom: 10, lineHeight: 1.5 } },
+      "⚠️ First email may go to spam — open it and mark as Not Spam so future ones land in your inbox."
+    ),
     React.createElement("div", { style: card },
       React.createElement("div", { style: row },
         React.createElement("div", null,
